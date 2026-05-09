@@ -1,12 +1,13 @@
 from __future__ import annotations
+
+import argparse
 from abc import ABC, abstractmethod
 
 
 class State(ABC):
-
     @abstractmethod
     def __init__(self) -> None:
-        pass
+        self.next_states: list[State] = []
 
     @abstractmethod
     def check_self(self, char: str) -> bool:
@@ -23,17 +24,19 @@ class State(ABC):
 
 
 class StartState(State):
-    next_states: list[State] = []
-
     def __init__(self):
         super().__init__()
 
-    def check_self(self, char):
+    def check_self(self, char: str):
         return super().check_self(char)
 
 
 class TerminationState(State):
-    pass  # Implement
+    def __init__(self):
+        super().__init__()
+
+    def check_self(self, char: str) -> bool:
+        return char == ""
 
 
 class DotState(State):
@@ -41,13 +44,11 @@ class DotState(State):
     state for . character (any character accepted)
     """
 
-    next_states: list[State] = []
-
     def __init__(self):
         super().__init__()
 
-    def check_self(self, char: str):
-        pass  # Implement
+    def check_self(self, char: str) -> bool:
+        return len(char) == 1
 
 
 class AsciiState(State):
@@ -55,24 +56,24 @@ class AsciiState(State):
     state for alphabet letters or numbers
     """
 
-    next_states: list[State] = []
-    curr_sym = ""
+    curr_sym: str = ""
 
     def __init__(self, symbol: str) -> None:
-        pass  # Implement
+        super().__init__()
+        self.curr_sym = symbol
 
-    def check_self(self, curr_char: str) -> State | Exception:
-        pass  # Implement
+    def check_self(self, char: str) -> bool:
+        return self.curr_sym == char
 
 
 class StarState(State):
-
-    next_states: list[State] = []
-
     def __init__(self, checking_state: State):
-        pass  # Implement
+        super().__init__()
+        self.checking_state = checking_state
 
-    def check_self(self, char):
+    def check_self(self, char: str) -> bool:
+        if self.checking_state.check_self(char):
+            return True
         for state in self.next_states:
             if state.check_self(char):
                 return True
@@ -81,26 +82,39 @@ class StarState(State):
 
 
 class PlusState(State):
-    next_states: list[State] = []
-
     def __init__(self, checking_state: State):
-        pass  # Implement
+        super().__init__()
+        self.checking_state: State = checking_state
 
-    def check_self(self, char):
-        pass  # Implement
+    def check_self(self, char: str) -> bool:
+        if self.checking_state.check_self(char):
+            return True
+        return False
 
 
 class RegexFSM:
-    curr_state: State = StartState()
-
     def __init__(self, regex_expr: str) -> None:
-
+        self.curr_state: StartState = StartState()
         prev_state = self.curr_state
-        tmp_next_state = self.curr_state
+        tmp_next_state = None
 
         for char in regex_expr:
-            tmp_next_state = self.__init_next_state(char, prev_state, tmp_next_state)
-            prev_state.next_states.append(tmp_next_state)
+            new_state = self.__init_next_state(char, prev_state, tmp_next_state)
+
+            if char in ("*", "+"):
+                _ = prev_state.next_states.pop()
+                prev_state.next_states.append(new_state)
+                tmp_next_state = new_state
+            else:
+                if tmp_next_state is not None:
+                    prev_state = tmp_next_state
+                prev_state.next_states.append(new_state)
+                tmp_next_state = new_state
+
+        if tmp_next_state is not None:
+            tmp_next_state.next_states.append(TerminationState())
+        else:
+            self.curr_state.next_states.append(TerminationState())
 
     def __init_next_state(
         self, next_token: str, prev_state: State, tmp_next_state: State
@@ -115,7 +129,7 @@ class RegexFSM:
                 # here you have to think, how to do it.
 
             case next_token if next_token == "+":
-                pass  # Implement
+                new_state = PlusState(tmp_next_state)
 
             case next_token if next_token.isascii():
                 new_state = AsciiState(next_token)
@@ -125,15 +139,45 @@ class RegexFSM:
 
         return new_state
 
-    def check_string(self):
-        pass  # Implement
+    def check_string(self, string: str) -> bool:
+        def dfs(current_idx: int, current_state: State) -> bool:
+            if current_idx == len(string):
+                if isinstance(current_state, TerminationState):
+                    return True
+                for next_s in current_state.next_states:
+                    if isinstance(next_s, TerminationState) or getattr(
+                        next_s, "check_self", lambda x: False
+                    )(""):
+                        return True
+                    if isinstance(next_s, StarState) and dfs(current_idx, next_s):
+                        return True
+                return False
+
+            char = string[current_idx]
+            if isinstance(current_state, (StarState, PlusState)):
+                if current_state.checking_state.check_self(char):
+                    if dfs(current_idx + 1, current_state):
+                        return True
+
+            for next_s in current_state.next_states:
+                if next_s.check_self(char):
+                    if dfs(current_idx + 1, next_s):
+                        return True
+                if isinstance(next_s, StarState):
+                    if dfs(current_idx, next_s):
+                        return True
+
+            return False
+
+        return dfs(0, self.curr_state)
 
 
 if __name__ == "__main__":
-    regex_pattern = "a*4.+hi"
+    parser = argparse.ArgumentParser(
+        description="Check a string against a regex pattern using FSM."
+    )
+    parser.add_argument("pattern", type=str, help="The regex pattern")
+    parser.add_argument("input", type=str, help="Input string")
+    args = parser.parse_args()
 
-    regex_compiled = RegexFSM(regex_pattern)
-
-    print(regex_compiled.check_string("aaaaaa4uhi"))  # True
-    print(regex_compiled.check_string("4uhi"))  # True
-    print(regex_compiled.check_string("meow"))  # False
+    print(RegexFSM(args.pattern).check_string(args.input))
